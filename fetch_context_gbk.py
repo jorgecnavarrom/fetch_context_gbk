@@ -12,25 +12,53 @@ import argparse
 from Bio import SeqIO
 
 __author__ = "Jorge Navarro"
-__version__ = "1.0"
+__version__ = "1.1"
 __maintainer__ = "Jorge Navarro"
 __email__ = "jorge.c.navarro.munoz@gmail.com"
 
 def parameter_parser():
-    def_extra = 20
+    def_extra = 20000
     def_o = Path("./output")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", help="GenBank file", type=Path, required=True)
     parser.add_argument("-l", "--label", help="Target label (gene_id, locus_tag, etc.)",
         type=str, required=True)
-    parser.add_argument("-e", "--extra", help=f"Number of kbps at either side of \
-        the target gene/protein/locus_tag to download. Default={def_extra}", \
+    parser.add_argument("-e", "--extra", help=f"Number of bps at either side of \
+        the target gene/protein/locus_tag to extract. Default={def_extra}", \
         default=def_extra, type=int)
+    parser.add_argument("-u", "--upstream", help="Override extension upstream of target \
+        with desired bps", type=int)
+    parser.add_argument("-d", "--downstream", help="Override extension downstream of \
+        target by desired bps", type=int)
     parser.add_argument("-o", "--outputfolder", help=f"Where to put retrieved \
         files. Default={def_o}", type=Path, default=def_o)
 
     return parser.parse_args()
+
+
+def validate_input(args):
+    extra_down = args.extra
+    extra_up = args.extra
+
+    if args.extra < 0:
+        sys.exit("Error: invalid argument for parameter '--extra'")
+
+    if not args.downstream is None:
+        extra_down = args.downstream
+
+        if args.downstream < 0:
+            sys.exit("Error: invalid argument for parameter '--downstream'")
+        
+    if not args.upstream is None:
+        extra_up = args.upstream
+        if args.upstream < 0:
+            sys.exit("Error: invalid argument for parameter '--upstream'")
+
+    if not args.input.is_file():
+        sys.exit("Error: argument for parameter '--input' is not a valid file")
+
+    return extra_up, extra_down
 
 
 # throw here as many qualifiers as desired
@@ -78,7 +106,7 @@ def check_borders_right(spans, pos):
 
 
 
-def scan_and_extract(gbk, target, extra, o):
+def scan_and_extract(gbk: Path, target: str, extra_up: int, extra_down: int, o: Path) -> None:
     num_extraction = 1 # just in case there is more than 1 feature with target label
     out_filename_base = f"{gbk.stem}_{target}_"
     target_found = False
@@ -99,13 +127,19 @@ def scan_and_extract(gbk, target, extra, o):
                         start_feature = int(feature.location.start)
                         end_feature = int(feature.location.end)
 
-                        start_extraction = max(0, start_feature - 1000*extra)
-                        end_extraction = min(end_feature + 1000*extra, len(record))
+                        # Extend at both sides of target
+                        if feature.location.strand == 1:
+                            start_extraction = max(0, start_feature - extra_up)
+                            end_extraction = min(end_feature + extra_down, len(record))
+                        else:
+                            start_extraction = max(0, start_feature - extra_down)
+                            end_extraction = min(end_feature + extra_up, len(record))
 
                         # check if we have features at borders. If so, include them
                         start_extraction = check_borders_left(spans, start_extraction)
                         end_extraction = check_borders_right(spans, end_extraction)
 
+                        # If target in the reverse strand, reverse-complement the whole extract
                         extraction = record[start_extraction:end_extraction]
                         rc = ""
                         if feature.location.strand != 1:
@@ -137,6 +171,8 @@ if __name__ == '__main__':
     if not o.is_dir():
         os.makedirs(o, exist_ok=True)
 
+    extra_up, extra_down = validate_input(args)
+
     print(f"Attempting to extract locus around feature with label '{args.label}'")
 
-    scan_and_extract(args.input, args.label, args.extra, o)
+    scan_and_extract(args.input, args.label, extra_up, extra_down, o)
